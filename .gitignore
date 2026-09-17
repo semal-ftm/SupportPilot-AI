@@ -1,0 +1,67 @@
+# -----------------------------
+# BACKEND
+# -----------------------------
+
+# Python virtual environment
+backend/venv/
+venv/
+
+# Python cache
+backend/__pycache__/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Environment variables / API keys
+backend/.env
+.env
+
+# Local SQLite database
+backend/supportpilot.db
+*.db
+
+# Generated RAG files
+backend/rag_index.faiss
+backend/rag_chunks.json
+
+# Uploaded runtime files
+backend/uploads/
+
+
+# -----------------------------
+# FRONTEND
+# -----------------------------
+
+# Node packages
+frontend/node_modules/
+node_modules/
+
+# Build output
+frontend/dist/
+dist/
+
+
+# -----------------------------
+# DEVELOPMENT FILES
+# -----------------------------
+
+# VS Code
+.vscode/
+
+# Windows
+Thumbs.db
+Desktop.ini
+
+# macOS
+.DS_Store
+
+
+# -----------------------------
+# LOGS
+# -----------------------------
+
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*

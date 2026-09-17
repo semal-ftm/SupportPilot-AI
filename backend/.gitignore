@@ -1,0 +1,26 @@
+# Python
+backend/venv/
+backend/__pycache__/
+backend/*.pyc
+
+# Secrets
+backend/.env
+
+# Database
+backend/supportpilot.db
+
+# Generated RAG data
+backend/rag_index.faiss
+backend/rag_chunks.json
+backend/uploads/
+
+# React
+frontend/node_modules/
+frontend/dist/
+
+# VS Code
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
