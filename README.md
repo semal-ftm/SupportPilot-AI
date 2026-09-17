@@ -1,158 +1,146 @@
-SupportPilot AI
+🤖 SupportPilot AI
 
-SupportPilot AI is an Agentic AI customer support system built using React, FastAPI, Groq, RAG, FAISS, and SQLite.
+Agentic AI customer support system with RAG, tool calling, conversation memory, order lookup, and automatic human escalation.
 
-Unlike a normal chatbot that only generates responses, SupportPilot can decide which tools to use, retrieve information from databases and company documents, remember conversations, and take actions such as creating support tickets.
+SupportPilot AI is a full-stack customer support application built with React, FastAPI, Groq, FAISS, and SQLite.
+Unlike a normal chatbot, SupportPilot can decide which tool to use, retrieve real data, search company documents, remember a conversation, and take actions such as creating support tickets.
 
-Features
+✨ Key Features
 
-Agentic AI customer support
+🤖 Agentic AI — decides which tool/action is required
 
-Groq LLM integration
+🧠 Groq LLM integration — generates natural support responses
 
-Tool calling
+📚 RAG knowledge search — answers from uploaded company documents
 
-RAG-based company knowledge search
+🔎 FAISS vector search — retrieves relevant policy information
 
-PDF and TXT document upload
+📄 PDF/TXT uploads — builds the support knowledge base
 
-FAISS vector search
+📦 Order lookup — retrieves real order data from SQLite
 
-Sentence Transformer embeddings
+🎫 Automatic ticket creation — escalates complex issues to humans
 
-Order lookup from SQLite
+🔄 Multi-tool execution — combines multiple actions in one request
 
-Automatic support ticket creation
+💬 Conversation memory — remembers context within a support session
 
-Human escalation
+✅ Ticket workflow — Open → In Progress → Resolved
 
-Multi-tool execution
+🖥️ Professional React dashboard
 
-Conversation memory
+⚡ FastAPI backend and Swagger API docs
 
-Ticket priority management
+🧩 System Architecture
 
-Ticket status management
+                        Customer
+                           │
+                           ▼
+                    React Dashboard
+                           │
+                           ▼
+                     FastAPI Backend
+                           │
+                           ▼
+                      Groq AI Agent
+                           │
+             ┌─────────────┼─────────────┐
+             │             │             │
+             ▼             ▼             ▼
+       Order Lookup    RAG Search    Ticket Creation
+             │             │             │
+             ▼             ▼             ▼
+           SQLite         FAISS      Human Escalation
+             │             │             │
+             └─────────────┼─────────────┘
+                           │
+                           ▼
+                 Conversation Memory
+                           │
+                           ▼
+                    Final AI Response
 
-React dashboard
+🛠️ Agent Tools
 
-FastAPI backend
+Tool
 
-Swagger API testing
+Purpose
 
-How It Works
-
-The customer sends a question to SupportPilot.
-
-Customer
-   ↓
-React Dashboard
-   ↓
-FastAPI Backend
-   ↓
-Groq AI Agent
-   ↓
-Decides which tool is required
-
-The agent currently has three main tools:
-
-Order Question
-      ↓
 get_order_details()
-      ↓
-SQLite Database
 
-Policy Question
-      ↓
+Retrieves real order information from SQLite
+
 search_knowledge_base()
-      ↓
-FAISS / RAG
 
-Serious Customer Issue
-      ↓
+Searches policies and FAQs using RAG + FAISS
+
 create_support_ticket()
-      ↓
-Human Escalation
 
-Agent Tools
+Creates a support ticket for human review
 
-1. Order Lookup
+Example — Order Lookup
 
-get_order_details()
-
-Retrieves order information from the SQLite database.
-
-Example:
-
+Customer:
 Where is order ORD-1001?
 
-The AI checks the order database before answering.
+Agent:
+→ get_order_details(ORD-1001)
+→ Reads order from SQLite
+→ Returns the current status to the customer
 
-2. RAG Knowledge Search
+Example — Human Escalation
 
-search_knowledge_base()
+Customer:
+I was charged twice for order ORD-1002.
 
-Searches uploaded company documents such as:
+Agent:
+→ Verifies ORD-1002
+→ Detects a payment issue
+→ Creates a high-priority support ticket
+→ Returns the ticket number
 
-Refund policies
-
-Shipping policies
-
-Return policies
-
-Warranty documents
-
-FAQs
-
-The AI uses the retrieved information instead of inventing company policies.
-
-3. Support Ticket Creation
-
-create_support_ticket()
-
-Creates a support ticket when an issue requires human review.
-
-Examples include:
-
-Duplicate charges
-
-Payment disputes
-
-Missing delivered packages
-
-Serious complaints
-
-Requests for human support
-
-What is RAG?
+📚 How RAG Works
 
 RAG stands for Retrieval-Augmented Generation.
 
-SupportPilot uses RAG to search company documents before generating an answer.
+Instead of allowing the LLM to guess company rules, SupportPilot first searches the uploaded company documents and then generates an answer using the retrieved information.
 
 PDF / TXT Document
-        ↓
-Text Extraction
-        ↓
-Text Chunks
-        ↓
-Embeddings
-        ↓
-FAISS Vector Search
-        ↓
-Relevant Information
-        ↓
-Groq LLM
-        ↓
-Customer Response
-
-This allows the same SupportPilot system to work for different companies by changing the uploaded knowledge documents.
-
-Conversation Memory
-
-SupportPilot stores conversation history by session.
+        │
+        ▼
+   Text Extraction
+        │
+        ▼
+     Chunking
+        │
+        ▼
+    Embeddings
+        │
+        ▼
+  FAISS Vector Index
+        │
+        ▼
+Relevant Document Chunks
+        │
+        ▼
+     Groq LLM
+        │
+        ▼
+ Customer Response
 
 Example:
+
+Customer:
+Can I return a product after 20 days?
+
+Agent:
+→ search_knowledge_base()
+→ Finds the uploaded refund policy
+→ Answers using the policy instead of guessing
+
+💬 Conversation Memory
+
+SupportPilot stores conversation history by session.
 
 Customer:
 Where is order ORD-1001?
@@ -163,11 +151,23 @@ Your order has been shipped.
 Customer:
 When should it arrive?
 
-The AI understands that the customer is still talking about ORD-1001.
+The agent understands that “it” refers to ORD-1001, so the customer does not need to repeat the order number.
 
-Ticket Management
+🎫 Ticket Management
 
-Support tickets can move through three states:
+SupportPilot automatically creates support tickets for issues that require human review, such as:
+
+Duplicate charges
+
+Payment disputes
+
+Missing delivered packages
+
+Serious unresolved complaints
+
+Explicit requests for a human agent
+
+Ticket status can be managed from the dashboard:
 
 Open
   ↓
@@ -175,51 +175,39 @@ In Progress
   ↓
 Resolved
 
-Ticket status changes are stored in the database.
+The selected status is saved in the SQLite database.
 
-Technology Stack
+💻 Technology Stack
+
+Layer
+
+Technologies
 
 Frontend
 
-React
-
-Vite
-
-JavaScript
-
-Axios
-
-CSS
+React, Vite, JavaScript, Axios, CSS
 
 Backend
 
-Python
+Python, FastAPI, SQLAlchemy
 
-FastAPI
-
-SQLAlchemy
+Database
 
 SQLite
 
 AI
 
-Groq API
-
-GPT-OSS model
-
-Tool Calling
+Groq API, GPT-OSS model, Tool Calling
 
 RAG
 
-FAISS
+FAISS, Sentence Transformers, PyPDF
 
-Sentence Transformers
+Testing
 
-PyPDF
+FastAPI Swagger UI
 
-Vector Embeddings
-
-Project Structure
+📁 Project Structure
 
 SupportPilot-AI/
 │
@@ -247,29 +235,31 @@ SupportPilot-AI/
     ├── package-lock.json
     └── vite.config.js
 
-Backend Setup
+🚀 Getting Started
 
-Go to the backend folder:
+1. Clone the Repository
+
+git clone https://github.com/YOUR_USERNAME/SupportPilot-AI.git
+cd SupportPilot-AI
+
+2. Start the Backend
 
 cd backend
-
-Create a virtual environment:
-
 python -m venv venv
 
-Activate it on Windows:
+Activate the virtual environment on Windows:
 
 .\venv\Scripts\Activate.ps1
 
-Install Python dependencies:
+Install dependencies:
 
 pip install -r requirements.txt
 
-Create a .env file inside the backend folder:
+Create a .env file inside backend/:
 
 GROQ_API_KEY=your_groq_api_key_here
 
-Run FastAPI:
+Start FastAPI:
 
 uvicorn main:app --reload
 
@@ -277,35 +267,29 @@ Backend:
 
 http://127.0.0.1:8000
 
-Swagger:
+Swagger API documentation:
 
 http://127.0.0.1:8000/docs
 
-Frontend Setup
+3. Start the Frontend
 
-Open another terminal and go to:
+Open another terminal:
 
 cd frontend
-
-Install packages:
-
 npm install
-
-Run React:
-
 npm run dev
 
 Frontend:
 
 http://localhost:5173
 
-Example Questions
+🧪 Example Test Questions
 
 Order Lookup
 
 Where is order ORD-1001?
 
-RAG Search
+RAG / Return Policy
 
 Can I return a product after 20 days?
 
@@ -313,7 +297,7 @@ Shipping Policy
 
 How long does standard shipping take?
 
-Human Escalation
+Multi-Tool Escalation
 
 I was charged twice for order ORD-1002.
 Please create a support ticket.
@@ -326,41 +310,21 @@ When should it arrive?
 
 What order number was I talking about?
 
-Sample Agent Flow
+🔐 Security
 
-Customer
-   ↓
-"I was charged twice for ORD-1002"
-   ↓
-Groq Agent
-   ↓
-get_order_details(ORD-1002)
-   ↓
-Order Verified
-   ↓
-create_support_ticket()
-   ↓
-Ticket Stored in SQLite
-   ↓
-Human Escalation
-
-Security
-
-The real Groq API key is stored inside:
+The real Groq API key must be stored only in:
 
 backend/.env
 
-The .env file is excluded from GitHub using .gitignore.
-
-Never upload your real API key to GitHub.
+The .env file is excluded through .gitignore and must never be committed to GitHub.
 
 Use:
 
 backend/.env.example
 
-to show which environment variables are required.
+to show other developers which environment variables are required.
 
-Future Improvements
+🔮 Future Improvements
 
 Real e-commerce API integration
 
@@ -370,19 +334,19 @@ Email notifications
 
 Live human-agent handoff
 
-PostgreSQL
+PostgreSQL production database
 
-Multi-company support
+Multi-company workspaces
 
 Advanced analytics
 
-Ticket assignment
+Ticket assignment to support agents
 
 Cloud deployment
 
 Multiple specialized AI agents
 
-Project Purpose
+🎯 Project Purpose
 
 SupportPilot AI demonstrates how Agentic AI can combine:
 
@@ -398,4 +362,8 @@ Conversation Memory
 +
 Autonomous Actions
 
-to create a practical customer support system.
+to build a practical customer support system instead of a simple question-answer chatbot.
+
+👨‍💻 Author
+
+Built as an Agentic AI project to demonstrate practical use of RAG, AI tool calling, autonomous actions, memory, and customer support automation.
