@@ -12,6 +12,7 @@ backend/supportpilot.db
 # Generated RAG data
 backend/rag_index.faiss
 backend/rag_chunks.json
+backend/rag_documents.json
 backend/uploads/
 
 # React

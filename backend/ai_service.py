@@ -1,143 +1,178 @@
-import os
 import json
+import re
+import time
 
-from dotenv import load_dotenv
 from groq import Groq
 
-from tools import get_order_details, create_support_ticket
+from app_settings import get_section
+from config import GROQ_API_KEY, GROQ_MODEL
+from privacy import mask_text, unmask
 from rag import search_knowledge_base
-
-
-# ---------------------------------------------------
-# LOAD ENVIRONMENT VARIABLES
-# ---------------------------------------------------
-
-load_dotenv()
-
-api_key = os.getenv("GROQ_API_KEY")
-
-if not api_key:
-    raise ValueError("GROQ_API_KEY not found in .env")
+from tools import (
+    cancel_order,
+    check_ticket_status,
+    create_support_ticket,
+    get_order_details,
+    request_refund,
+)
 
 
 # ---------------------------------------------------
 # GROQ CLIENT
 # ---------------------------------------------------
 
-client = Groq(api_key=api_key)
+client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
+
+
+def ai_available():
+    return client is not None
+
+
+def _require_client():
+    if client is None:
+        raise RuntimeError(
+            "GROQ_API_KEY is not configured. Add it to backend/.env"
+        )
 
 
 # ---------------------------------------------------
 # AGENT TOOLS
 # ---------------------------------------------------
 
-agent_tools = [
-    {
+def _tool(name, description, properties, required):
+    return {
         "type": "function",
         "function": {
-            "name": "get_order_details",
-            "description": (
-                "Get real order information from the company database "
-                "using an order number."
-            ),
+            "name": name,
+            "description": description,
             "parameters": {
                 "type": "object",
-                "properties": {
-                    "order_number": {
-                        "type": "string",
-                        "description": "Order number such as ORD-1001"
-                    }
-                },
-                "required": ["order_number"]
-            }
-        }
-    },
-
-    {
-        "type": "function",
-        "function": {
-            "name": "search_knowledge_base",
-            "description": (
-                "Search company FAQs, return policies, refund policies, "
-                "shipping rules, warranty information, and other "
-                "company documents."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": (
-                            "The customer's question about company policies."
-                        )
-                    }
-                },
-                "required": ["query"]
-            }
-        }
-    },
-
-    {
-        "type": "function",
-        "function": {
-            "name": "create_support_ticket",
-            "description": (
-                "Create a human support ticket when the issue needs "
-                "human review or cannot be safely resolved by the AI. "
-                "Use this for payment disputes, duplicate charges, "
-                "missing delivered packages, serious complaints, or "
-                "when the customer asks for human support."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "title": {
-                        "type": "string",
-                        "description": "Short title for the support issue"
-                    },
-                    "description": {
-                        "type": "string",
-                        "description": "Summary of the customer's problem"
-                    },
-                    "priority": {
-                        "type": "string",
-                        "enum": [
-                            "Low",
-                            "Medium",
-                            "High"
-                        ]
-                    },
-                    "order_number": {
-                        "type": "string",
-                        "description": (
-                            "Related order number if one exists"
-                        )
-                    }
-                },
-                "required": [
-                    "title",
-                    "description",
-                    "priority"
-                ]
+                "properties": properties,
+                "required": required
             }
         }
     }
+
+
+ORDER_NUMBER = {
+    "type": "string",
+    "description": "Order number such as ORD-1001"
+}
+
+CUSTOMER_EMAIL = {
+    "type": "string",
+    "description": (
+        "Email address the customer gave to confirm their identity. "
+        "Pass placeholders such as [EMAIL_1] exactly as they appear."
+    )
+}
+
+agent_tools = [
+    _tool(
+        "get_order_details",
+        "Get real order information from the company database "
+        "using an order number.",
+        {"order_number": ORDER_NUMBER},
+        ["order_number"]
+    ),
+
+    _tool(
+        "search_knowledge_base",
+        "Search company FAQs, return policies, refund policies, "
+        "shipping rules, warranty information, and other "
+        "company documents.",
+        {
+            "query": {
+                "type": "string",
+                "description": "The customer's question about company policies."
+            }
+        },
+        ["query"]
+    ),
+
+    _tool(
+        "create_support_ticket",
+        "Create a support ticket for human review. "
+        "Use this for payment disputes, duplicate charges, "
+        "missing packages, serious complaints, or "
+        "when the customer asks for human support.",
+        {
+            "title": {
+                "type": "string",
+                "description": "Short title for the support issue"
+            },
+            "description": {
+                "type": "string",
+                "description": "Summary of the customer's problem"
+            },
+            "priority": {
+                "type": "string",
+                "enum": ["Low", "Medium", "High"]
+            },
+            "category": {
+                "type": "string",
+                "enum": [
+                    "Payment", "Delivery", "Refund",
+                    "Product", "Account", "Other"
+                ]
+            },
+            "order_number": {
+                "type": "string",
+                "description": "Related order number if one exists"
+            }
+        },
+        ["title", "description", "priority", "category"]
+    ),
+
+    _tool(
+        "cancel_order",
+        "Cancel an order that has not shipped yet. Requires the "
+        "customer's email address to confirm their identity.",
+        {"order_number": ORDER_NUMBER, "customer_email": CUSTOMER_EMAIL},
+        ["order_number", "customer_email"]
+    ),
+
+    _tool(
+        "request_refund",
+        "Submit a refund request for a delivered order. Creates a ticket "
+        "for human approval. Requires the customer's email address.",
+        {
+            "order_number": ORDER_NUMBER,
+            "customer_email": CUSTOMER_EMAIL,
+            "reason": {
+                "type": "string",
+                "description": "Why the customer wants a refund"
+            }
+        },
+        ["order_number", "customer_email", "reason"]
+    ),
+
+    _tool(
+        "check_ticket_status",
+        "Look up the current status of an existing support ticket.",
+        {
+            "ticket_number": {
+                "type": "string",
+                "description": "Ticket number such as TKT-0001"
+            }
+        },
+        ["ticket_number"]
+    ),
 ]
 
 
-# ---------------------------------------------------
-# MAIN SUPPORT AGENT
-# ---------------------------------------------------
+def system_prompt():
+    """The base prompt plus the company name set in Settings → Chat window."""
 
-def generate_support_response(
-    message: str,
-    history=None
-):
+    company = get_section("branding").get("company_name", "").strip()
 
-    messages = [
-        {
-            "role": "system",
-            "content": """
+    if not company or company == "Customer Support":
+        return SYSTEM_PROMPT
+
+    return SYSTEM_PROMPT + f"\nYou represent {company}. Refer to the business as {company}.\n"
+
+
+SYSTEM_PROMPT = """
 You are SupportPilot AI, an agentic customer support assistant.
 
 You help customers with:
@@ -164,7 +199,8 @@ IMPORTANT RULES:
    use search_knowledge_base.
 
 5. Base policy answers only on retrieved
-   company documents.
+   company documents. If the documents do not
+   cover the question, say so and offer a ticket.
 
 6. Create a support ticket when an issue requires
    human review, including:
@@ -180,216 +216,379 @@ IMPORTANT RULES:
 8. When creating a ticket, tell the customer
    the ticket number.
 
-9. Keep responses friendly, professional,
-   and concise.
+9. cancel_order and request_refund change real data.
+   Only call them when the customer clearly asks, and
+   only after the customer has given the email address
+   used on the order.
+
+10. PRIVACY: personal data in customer messages is replaced
+    with placeholders such as [EMAIL_1], [PHONE_1], [CARD_1],
+    [IBAN_1] or [NATIONAL_ID_1]. Treat a placeholder as the
+    value itself and pass it unchanged to tools. Never ask
+    customers for card numbers, CVV, passwords, or one-time
+    codes. If a customer shares card or bank details, tell
+    them it was hidden for their protection and they should
+    not share it in chat.
+
+11. Reply in the same language the customer writes in
+    (for example Arabic or English).
+
+12. Keep responses friendly, professional,
+    and concise. Use short paragraphs or bullet
+    points and **bold** key facts like order status.
 """
-                }
-    ]
+
+
+# ---------------------------------------------------
+# TOOL EXECUTION
+# ---------------------------------------------------
+
+def _summarize(name, result):
+    if not result.get("success"):
+        return result.get("message", "No result")
+
+    if name == "get_order_details":
+        return f"{result['order_number']} is {result['status']}"
+
+    if name == "search_knowledge_base":
+        files = sorted({item["filename"] for item in result["results"]})
+        return f"{len(result['results'])} passages from {', '.join(files)}"
+
+    if name in ("create_support_ticket", "request_refund"):
+        return f"Created {result['ticket_number']}"
+
+    if name == "cancel_order":
+        if result.get("ticket_number"):
+            return f"Sent to team as {result['ticket_number']}"
+        return f"{result['order_number']} cancelled"
+
+    if name == "check_ticket_status":
+        return f"{result['ticket_number']} is {result['status']}"
+
+    return "Done"
+
+
+def execute_tool(name, arguments, session_id, sentiment):
+    # The model only ever sees placeholders; tools get the real values
+    args = unmask(arguments, session_id)
+
+    if name == "get_order_details":
+        return get_order_details(args.get("order_number", ""))
+
+    if name == "search_knowledge_base":
+        return search_knowledge_base(args.get("query", ""))
+
+    if name == "create_support_ticket":
+        return create_support_ticket(
+            title=arguments.get("title", "Support request"),
+            description=arguments.get("description", ""),
+            priority=arguments.get("priority", "Medium"),
+            order_number=args.get("order_number"),
+            category=arguments.get("category", "Other"),
+            session_id=session_id,
+            sentiment=sentiment
+        )
+
+    if name == "cancel_order":
+        return cancel_order(
+            args.get("order_number", ""),
+            args.get("customer_email"),
+            session_id=session_id,
+            sentiment=sentiment
+        )
+
+    if name == "request_refund":
+        return request_refund(
+            order_number=args.get("order_number", ""),
+            # Stored on the ticket, so it keeps the masked version
+            reason=arguments.get("reason", ""),
+            customer_email=args.get("customer_email"),
+            session_id=session_id,
+            sentiment=sentiment
+        )
+
+    if name == "check_ticket_status":
+        return check_ticket_status(args.get("ticket_number", ""), session_id)
+
+    return {"success": False, "message": f"Unknown tool {name}"}
+
+
+# ---------------------------------------------------
+# MAIN SUPPORT AGENT
+# ---------------------------------------------------
+
+def run_agent(
+    message: str,
+    history=None,
+    session_id: str = "console",
+    sentiment: str = "neutral"
+):
+    """
+    Run the agent loop and yield events as they happen:
+
+      tool_start / tool_end  - each tool call with timing
+      sources                - knowledge base passages used
+      token                  - pieces of the streamed answer
+      final                  - full answer, tools and sources
+    """
+
+    _require_client()
+
+    messages = [{"role": "system", "content": system_prompt()}]
 
     if history:
         messages.extend(history)
 
-    messages.append(
-        {
-            "role": "user",
-            "content": message
-        }
-    )
+    messages.append({"role": "user", "content": message})
 
     used_tools = []
+    sources = []
+    answer = ""
 
     # Allow the agent to make several decisions
-    for _ in range(4):
+    for _ in range(5):
 
-        response = client.chat.completions.create(
-            model="openai/gpt-oss-120b",
+        stream = client.chat.completions.create(
+            model=GROQ_MODEL,
             messages=messages,
             tools=agent_tools,
             tool_choice="auto",
             temperature=0.2,
-            max_tokens=500
+            max_tokens=900,
+            stream=True
         )
 
-        ai_message = response.choices[0].message
+        content = ""
+        tool_calls = {}
+
+        for chunk in stream:
+
+            if not chunk.choices:
+                continue
+
+            delta = chunk.choices[0].delta
+
+            if delta.content:
+
+                # Separate text from an earlier turn in the same answer
+                if not content and answer:
+                    answer += "\n\n"
+                    yield {"type": "token", "text": "\n\n"}
+
+                content += delta.content
+                answer += delta.content
+
+                yield {"type": "token", "text": delta.content}
+
+            for call in delta.tool_calls or []:
+
+                slot = tool_calls.setdefault(
+                    call.index,
+                    {"id": "", "name": "", "arguments": ""}
+                )
+
+                if call.id:
+                    slot["id"] = call.id
+
+                if call.function and call.function.name:
+                    slot["name"] = call.function.name
+
+                if call.function and call.function.arguments:
+                    slot["arguments"] += call.function.arguments
 
         # ---------------------------------------------------
         # NO MORE TOOLS NEEDED
         # ---------------------------------------------------
 
-        if not ai_message.tool_calls:
+        if not tool_calls:
+            break
 
-            return {
-                "response": ai_message.content,
-                "tool_used": used_tools
-            }
+        calls = [tool_calls[key] for key in sorted(tool_calls)]
 
         # Store AI tool-call message
         messages.append(
-            ai_message.model_dump(exclude_none=True)
+            {
+                "role": "assistant",
+                "content": content,
+                "tool_calls": [
+                    {
+                        "id": call["id"],
+                        "type": "function",
+                        "function": {
+                            "name": call["name"],
+                            "arguments": call["arguments"] or "{}"
+                        }
+                    }
+                    for call in calls
+                ]
+            }
         )
 
         # ---------------------------------------------------
         # EXECUTE REQUESTED TOOLS
         # ---------------------------------------------------
 
-        for tool_call in ai_message.tool_calls:
+        for call in calls:
 
-            function_name = tool_call.function.name
+            name = call["name"]
 
-            arguments = json.loads(
-                tool_call.function.arguments
+            try:
+                arguments = json.loads(call["arguments"] or "{}")
+            except json.JSONDecodeError:
+                arguments = {}
+
+            yield {
+                "type": "tool_start",
+                "id": call["id"],
+                "name": name,
+                "args": arguments
+            }
+
+            started = time.perf_counter()
+
+            try:
+                result = execute_tool(name, arguments, session_id, sentiment)
+            except Exception as error:
+                result = {"success": False, "message": str(error)}
+
+            elapsed = int((time.perf_counter() - started) * 1000)
+
+            if name == "search_knowledge_base" and result.get("success"):
+                for item in result["results"]:
+                    source = {
+                        "filename": item["filename"],
+                        "text": item["text"][:320],
+                        "score": item["score"]
+                    }
+
+                    if source not in sources:
+                        sources.append(source)
+
+                yield {"type": "sources", "sources": sources}
+
+            summary = _summarize(name, result)
+
+            record = {
+                "id": call["id"],
+                "name": name,
+                "args": arguments,
+                "ok": bool(result.get("success")),
+                "summary": summary,
+                "ms": elapsed
+            }
+
+            used_tools.append(record)
+
+            yield {"type": "tool_end", **record}
+
+            # Defensive: never pass raw personal data back to the model
+            tool_content, _ = mask_text(
+                json.dumps(result, default=str), session_id
             )
-
-            # ===============================================
-            # ORDER LOOKUP TOOL
-            # ===============================================
-
-            if function_name == "get_order_details":
-
-                order_number = arguments["order_number"]
-
-                tool_result = get_order_details(
-                    order_number
-                )
-
-                tool_label = (
-                    f"get_order_details({order_number})"
-                )
-
-                if tool_label not in used_tools:
-                    used_tools.append(tool_label)
-
-            # ===============================================
-            # RAG KNOWLEDGE BASE TOOL
-            # ===============================================
-
-            elif function_name == "search_knowledge_base":
-
-                query = arguments["query"]
-
-                tool_result = search_knowledge_base(
-                    query
-                )
-
-                if "search_knowledge_base" not in used_tools:
-                    used_tools.append(
-                        "search_knowledge_base"
-                    )
-
-            # ===============================================
-            # SUPPORT TICKET TOOL
-            # ===============================================
-
-            elif function_name == "create_support_ticket":
-
-                order_number = arguments.get(
-                    "order_number"
-                )
-
-                # -------------------------------------------
-                # VERIFY ORDER BEFORE CREATING TICKET
-                # -------------------------------------------
-
-                if order_number:
-
-                    order_tool_label = (
-                        f"get_order_details({order_number})"
-                    )
-
-                    already_checked = (
-                        order_tool_label in used_tools
-                    )
-
-                    if not already_checked:
-
-                        order_check = get_order_details(
-                            order_number
-                        )
-
-                        used_tools.append(
-                            order_tool_label
-                        )
-
-                        # Order does not exist
-                        if not order_check.get("success"):
-
-                            tool_result = {
-                                "success": False,
-                                "message": (
-                                    f"Order {order_number} "
-                                    "could not be verified. "
-                                    "Support ticket was not created."
-                                )
-                            }
-
-                            messages.append(
-                                {
-                                    "role": "tool",
-                                    "tool_call_id": tool_call.id,
-                                    "content": json.dumps(
-                                        tool_result
-                                    )
-                                }
-                            )
-
-                            # Skip ticket creation
-                            continue
-
-                # -------------------------------------------
-                # CREATE TICKET
-                # -------------------------------------------
-
-                tool_result = create_support_ticket(
-                    title=arguments["title"],
-                    description=arguments[
-                        "description"
-                    ],
-                    priority=arguments[
-                        "priority"
-                    ],
-                    order_number=order_number
-                )
-
-                if "create_support_ticket" not in used_tools:
-                    used_tools.append(
-                        "create_support_ticket"
-                    )
-
-            # ===============================================
-            # UNKNOWN TOOL
-            # ===============================================
-
-            else:
-
-                tool_result = {
-                    "success": False,
-                    "message": (
-                        f"Unknown tool: {function_name}"
-                    )
-                }
-
-            # ---------------------------------------------------
-            # SEND TOOL RESULT BACK TO THE AI
-            # ---------------------------------------------------
 
             messages.append(
                 {
                     "role": "tool",
-                    "tool_call_id": tool_call.id,
-                    "content": json.dumps(
-                        tool_result
-                    )
+                    "tool_call_id": call["id"],
+                    "content": tool_content
                 }
             )
 
-    # ---------------------------------------------------
-    # FALLBACK IF AGENT EXCEEDS TOOL LOOP
-    # ---------------------------------------------------
+    if not answer.strip():
+        answer = (
+            "I'm sorry, I couldn't complete that request. "
+            "Could you rephrase it, or ask me to connect you with a human agent?"
+        )
+        yield {"type": "token", "text": answer}
+
+    yield {
+        "type": "final",
+        "text": answer,
+        "tools": used_tools,
+        "sources": sources
+    }
+
+
+def generate_support_response(
+    message: str,
+    history=None,
+    session_id: str = "console",
+    sentiment: str = "neutral"
+):
+    """Non-streaming wrapper kept for the original /chat endpoint."""
+
+    final = None
+
+    for event in run_agent(message, history, session_id, sentiment):
+        if event["type"] == "final":
+            final = event
 
     return {
-        "response": (
-            "I couldn't complete the request automatically. "
-            "Please contact human support."
-        ),
-        "tool_used": used_tools
+        "response": final["text"],
+        "tool_used": final["tools"],
+        "sources": final["sources"]
+    }
+
+
+# ---------------------------------------------------
+# AGENT ASSIST FOR HUMAN STAFF
+# ---------------------------------------------------
+
+def generate_ticket_assist(ticket, transcript):
+    """
+    Summarize a ticket and draft a reply for a human agent to review.
+    Input is already masked, so no personal data is sent.
+    """
+
+    _require_client()
+
+    conversation = "\n".join(
+        f"{item['role'].upper()}: {item['text']}"
+        for item in transcript[-20:]
+    ) or "(no conversation linked)"
+
+    prompt = f"""
+You are assisting a human customer support agent.
+
+TICKET
+Title: {ticket['title']}
+Category: {ticket.get('category')}
+Priority: {ticket['priority']}
+Status: {ticket['status']}
+Order: {ticket.get('order_number') or 'none'}
+Description: {ticket['description']}
+
+CONVERSATION
+{conversation}
+
+Return only a JSON object with these keys:
+"summary": 2-3 sentence summary of the issue,
+"customer_mood": one short phrase,
+"next_steps": array of up to 3 short recommended actions,
+"suggested_reply": a friendly, professional reply to the customer,
+written in the customer's language, that does not promise anything
+the agent has not verified.
+"""
+
+    response = client.chat.completions.create(
+        model=GROQ_MODEL,
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.3,
+        max_tokens=900
+    )
+
+    content = response.choices[0].message.content or ""
+
+    match = re.search(r"\{.*\}", content, re.DOTALL)
+
+    try:
+        data = json.loads(match.group(0) if match else content)
+    except json.JSONDecodeError:
+        data = {"summary": content.strip()}
+
+    return {
+        "summary": data.get("summary", ""),
+        "customer_mood": data.get("customer_mood", ""),
+        "next_steps": data.get("next_steps", []) or [],
+        "suggested_reply": data.get("suggested_reply", ""),
     }

@@ -24,6 +24,7 @@ backend/supportpilot.db
 # Generated RAG files
 backend/rag_index.faiss
 backend/rag_chunks.json
+backend/rag_documents.json
 
 # Uploaded runtime files
 backend/uploads/
